@@ -69,7 +69,7 @@ class ModelEvaluator:
 
         fig, ax = plt.subplots(figsize=(10, 8))
         scatter = ax.scatter(repr_2d[:, 0], repr_2d[:, 1], c=labels, cmap="RdYlGn", alpha=0.6)
-        fig.colorbar(scatter, label="0=Legit, 1=Phishing")
+        fig.colorbar(scatter, label="0=Phishing, 1=Legitimate")
         ax.set_title("Learned URL Representations (t-SNE)")
 
         output_path = self.output_dir / filename

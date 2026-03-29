@@ -3,46 +3,20 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import pandas as pd
 import torch
 from sklearn.metrics import confusion_matrix
 from torch.utils.data import DataLoader, TensorDataset
 
-from data.collectors.phishtank_collector import PhishingDataCollector
 from src.evaluation import ModelEvaluator
-from src.features import DataPreprocessor, URLFeatureExtractor
-from src.models import PhishingRepresentationModel, TabularMLPBaseline
+from src.features.load_phiusiiil import prepare_for_training
+from src.models import TabularMLPBaseline
 from src.training import PhishingTrainer, TrainerConfig
 
 
-def make_loader(X, y, batch_size: int = 64, shuffle: bool = True, input_dtype: str = "long") -> DataLoader:
-    if input_dtype == "float":
-        x_tensor = torch.FloatTensor(X)
-    else:
-        x_tensor = torch.LongTensor(X)
+def make_loader(X, y, batch_size: int = 64, shuffle: bool = True) -> DataLoader:
+    x_tensor = torch.FloatTensor(X)
     dataset = TensorDataset(x_tensor, torch.LongTensor(y))
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
-
-
-def load_url_dataset(args) -> pd.DataFrame:
-    collector = PhishingDataCollector()
-
-    print("[INFO] Collecting phishing URLs from PhishTank...")
-    phish_df = collector.collect_phishing_urls(limit=args.max_phishing)
-
-    print(f"[INFO] Loading legitimate domains from {args.legit_csv}...")
-    legit_df = collector.collect_legitimate_urls(args.legit_csv, limit=args.max_legit)
-
-    combined = pd.concat([phish_df[["url", "label"]], legit_df[["url", "label"]]], ignore_index=True)
-    combined = combined.sample(frac=1.0, random_state=42).reset_index(drop=True)
-    return combined
-
-
-def load_tabular_dataset(csv_path: str) -> pd.DataFrame:
-    path = Path(csv_path)
-    if not path.exists():
-        raise FileNotFoundError(f"Tabular dataset not found: {path}")
-    return pd.read_csv(path)
 
 
 def evaluate_and_save_artifacts(model, test_loader, device: str, output_dir: str):
@@ -80,61 +54,44 @@ def evaluate_and_save_artifacts(model, test_loader, device: str, output_dir: str
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Phishing detection with representation learning")
-    parser.add_argument("--dataset-mode", type=str, default="url", choices=["url", "tabular"])
-    parser.add_argument("--legit-csv", type=str, default="data/raw/top-1m.csv", help="Path to CSV of legit domains")
+    parser = argparse.ArgumentParser(description="Phishing detection training with PhiUSIIL dataset")
     parser.add_argument(
-        "--tabular-csv",
+        "--csv",
         type=str,
-        default="data/raw/Phishing_Legitimate_full.csv",
-        help="Path to tabular phishing dataset CSV",
+        default="data/raw/PhiUSIIL_Phishing_URL_Dataset.csv",
+        help="Path to PhiUSIIL dataset CSV",
     )
-    parser.add_argument("--label-col", type=str, default="CLASS_LABEL", help="Label column for tabular dataset")
-    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--epochs", type=int, default=20)
-    parser.add_argument("--max-len", type=int, default=200)
-    parser.add_argument("--max-phishing", type=int, default=50000)
-    parser.add_argument("--max-legit", type=int, default=50000)
     parser.add_argument("--checkpoint", type=str, default="experiments/best_model.pt")
     parser.add_argument("--output-dir", type=str, default="experiments")
-    parser.add_argument("--log-interval", type=int, default=100, help="Print training progress every N batches")
+    parser.add_argument("--log-interval", type=int, default=100)
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    print(f"[INFO] Dataset mode: {args.dataset_mode}")
 
-    preprocessor = DataPreprocessor(max_len=args.max_len)
-    input_dtype = "long"
+    print(f"[INFO] Loading PhiUSIIL dataset from {args.csv}...")
+    data = prepare_for_training(args.csv)
 
-    if args.dataset_mode == "tabular":
-        print(f"[INFO] Loading tabular dataset from {args.tabular_csv}...")
-        tabular_df = load_tabular_dataset(args.tabular_csv)
-        (X_train, y_train), (X_val, y_val), (X_test, y_test) = preprocessor.prepare_tabular_dataset(
-            tabular_df,
-            label_col=args.label_col,
-        )
-        input_dtype = "float"
-        model = TabularMLPBaseline(input_dim=X_train.shape[1])
-        if args.checkpoint == "experiments/best_model.pt":
-            args.checkpoint = "experiments/best_model_tabular.pt"
-    else:
-        df = load_url_dataset(args)
-        (X_train, y_train), (X_val, y_val), (X_test, y_test) = preprocessor.prepare_dataset(df)
-        model = PhishingRepresentationModel(vocab_size=URLFeatureExtractor.vocab_size())
+    X_train, y_train = data['X_train'], data['y_train']
+    X_val, y_val = data['X_val'], data['y_val']
+    X_test, y_test = data['X_test'], data['y_test']
 
-    train_loader = make_loader(X_train, y_train, batch_size=args.batch_size, shuffle=True, input_dtype=input_dtype)
-    val_loader = make_loader(X_val, y_val, batch_size=args.batch_size, shuffle=False, input_dtype=input_dtype)
-    test_loader = make_loader(X_test, y_test, batch_size=args.batch_size, shuffle=False, input_dtype=input_dtype)
+    train_loader = make_loader(X_train, y_train, batch_size=args.batch_size, shuffle=True)
+    val_loader = make_loader(X_val, y_val, batch_size=args.batch_size, shuffle=False)
+    test_loader = make_loader(X_test, y_test, batch_size=args.batch_size, shuffle=False)
 
     print(
         f"[INFO] Split sizes: train={len(y_train)}, val={len(y_val)}, test={len(y_test)} | "
-        f"batches(train)={len(train_loader)}"
+        f"Features: {X_train.shape[1]}"
     )
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"[INFO] Device: {device}")
+
+    model = TabularMLPBaseline(input_dim=X_train.shape[1])
 
     config = TrainerConfig(epochs=args.epochs, log_interval=args.log_interval)
     trainer = PhishingTrainer(model=model, device=device, config=config)
