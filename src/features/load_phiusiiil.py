@@ -56,32 +56,74 @@ def load_phiusiiil_dataset(
     return df
 
 
-# Features that leak label - derived from page content analysis
+# Features that leak label - derived from page content analysis or too predictive
 # These give away the answer, not from URL itself
 LEAKING_FEATURES = {
-    'Bank', 'Pay', 'Crypto',  # Target categories - perfect predictors
+    # Target categories - perfect predictors
+    'Bank', 'Pay', 'Crypto',
+    # Form/HTML features - page content
     'HasPasswordField', 'HasExternalFormSubmit', 'HasSubmitButton',
-    'HasHiddenFields', 'InsecureForms', 'PopUpWindow',
+    'HasHiddenFields', 'InsecureForms', 'PopUpWindow', 'SubmitInfoToEmail',
     'NoOfPopup', 'NoOfiFrame', 'IframeOrFrame',
+    # Domain/Page analysis features
+    'HasTitle', 'Title', 'DomainTitleMatchScore', 'URLTitleMatchScore',
+    'HasFavicon', 'Robots', 'IsResponsive',
+    # Content features - require crawling
+    'HasDescription', 'HasCopyrightInfo',
+    'NoOfImage', 'NoOfCSS', 'NoOfJS',
+    'NoOfSelfRef', 'NoOfEmptyRef', 'NoOfExternalRef',
+    'PctExtHyperlinks', 'PctExtResourceUrls',
+    'LineOfCode', 'LargestLineLength',
+    # Features that need page rendering
+    'FakeLinkInStatusBar', 'RightClickDisabled',
+    'ImagesOnlyInForm', 'MissingTitle',
+    # Other suspicious features
+    'EmbeddedBrandName', 'FrequentDomainNameMismatch',
+    'RelativeFormAction', 'ExtFormAction', 'AbnormalFormAction',
+    'AbnormalExtFormActionR', 'ExtMetaScriptLinkRT',
+    'PctNullSelfRedirectHyperlinks', 'PctNullSelfRedirectHyperlinksRT',
+    'PctExtResourceUrlsRT',
+}
+
+
+# Only keep URL-derived features (no page crawling needed)
+URL_ONLY_FEATURES = {
+    'URLLength', 'DomainLength', 'TLDLength',
+    'NumDots', 'NumDash', 'NumDashInHostname',
+    'AtSymbol', 'TildeSymbol', 'NumUnderscore',
+    'NumPercent', 'NumQueryComponents', 'NumAmpersand', 'NumHash',
+    'NumNumericChars', 'NoHttps', 'RandomString', 'IpAddress',
+    'DomainInSubdomains', 'DomainInPaths', 'HttpsInHostname',
+    'HostnameLength', 'PathLength', 'QueryLength',
+    'DoubleSlashInPath', 'NoOfSubDomain',
+    'CharContinuationRate', 'URLCharProb', 'TLDLegitimateProb',
+    'URLSimilarityIndex', 'IsDomainIP', 'HasObfuscation',
+    'NoOfObfuscatedChar', 'ObfuscationRatio',
+    'NoOfLettersInURL', 'LetterRatioInURL',
+    'NoOfDegitsInURL', 'DegitRatioInURL',
+    'NoOfEqualsInURL', 'NoOfQMarkInURL', 'NoOfAmpersandInURL',
+    'NoOfOtherSpecialCharsInURL', 'SpacialCharRatioInURL',
+    'IsHTTPS',
 }
 
 
 def get_feature_columns(df: pd.DataFrame) -> list[str]:
     """
-    Get list of feature columns (excluding url, label, non-numeric, and leaking features).
+    Get only URL-derived features (no page content features).
 
     Args:
         df: DataFrame loaded from PhiUSIIL dataset
 
     Returns:
-        List of feature column names
+        List of feature column names - only from URL string
     """
-    exclude = {'url', 'label', 'FILENAME', 'Domain', 'TLD', 'Title'} | LEAKING_FEATURES
-
     feature_cols = []
     for col in df.columns:
-        if col not in exclude and df[col].dtype in ['int64', 'float64']:
+        if col in URL_ONLY_FEATURES and df[col].dtype in ['int64', 'float64']:
             feature_cols.append(col)
+
+    print(f"[INFO] Using {len(feature_cols)} URL-only features (no page crawling features)")
+    return feature_cols
 
     print(f"[INFO] Excluded {len(LEAKING_FEATURES)} leaking features: {sorted(LEAKING_FEATURES)}")
     return feature_cols
